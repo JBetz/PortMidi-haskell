@@ -49,6 +49,7 @@ module Sound.PortMidi (
   , getDeviceInfo
   , openInput
   , openOutput
+  , openOutputWithCustomTiming
   , setFilter
   , channel
   , setChannelMask
@@ -259,11 +260,22 @@ openInput inputDevice =
         stream <- peek ptr
         Right <$> newForeignPtr_ stream))
 
-foreign import ccall "portmidi.h Pm_OpenOutput" pm_OpenOutput :: Ptr PMStreamPtr -> CInt -> Ptr () -> CLong -> Ptr () -> Ptr () -> CLong -> IO CInt
+foreign import ccall "portmidi.h Pm_OpenOutput" pm_OpenOutput :: Ptr PMStreamPtr -> CInt -> Ptr () -> CLong -> FunPtr (IO Timestamp) -> Ptr () -> CLong -> IO CInt
 openOutput :: DeviceID -> Int -> IO (Either PMError PMStream)
 openOutput outputDevice latency =
   with nullPtr (\ptr -> do
-    eitherErrorOrSuccess <$> pm_OpenOutput ptr (fromIntegral outputDevice) nullPtr 0 nullPtr nullPtr (fromIntegral latency) >>= either
+    eitherErrorOrSuccess <$> pm_OpenOutput ptr (fromIntegral outputDevice) nullPtr 0 nullFunPtr nullPtr (fromIntegral latency) >>= either
+      (return . Left)
+      (\_ -> do
+        stream <- peek ptr
+        Right <$> newForeignPtr_ stream))
+
+foreign import ccall "wrapper" makeTimeProcedure :: IO Timestamp -> IO (FunPtr (IO Timestamp)) 
+openOutputWithCustomTiming :: DeviceID -> Int -> IO Timestamp -> IO (Either PMError PMStream)
+openOutputWithCustomTiming outputDevice latency timeProcedure  =
+  with nullPtr (\ptr -> do
+    timeProcedurePtr <- makeTimeProcedure timeProcedure
+    eitherErrorOrSuccess <$> pm_OpenOutput ptr (fromIntegral outputDevice) nullPtr 0 timeProcedurePtr nullPtr (fromIntegral latency) >>= either
       (return . Left)
       (\_ -> do
         stream <- peek ptr
